@@ -3,7 +3,7 @@ title: "Holiday Episodes"
 author: "Bryce, Hon Jung, Shi Ying, Xiuli, Yunhan"
 date: "`r Sys.Date()`"
 output:
-  html_document: default
+  rmarkdown::github_document: default
   pdf_document: default
 ---
 
