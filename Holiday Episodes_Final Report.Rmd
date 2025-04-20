@@ -1,0 +1,477 @@
+---
+title: "Holiday Episodes"
+author: "Bryce, Hon Jung, Shi Ying, Xiuli, Yunhan"
+date: "`r Sys.Date()`"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+## Introduction
+
+This report draws on the TidyTuesday dataset released on December 19, 2023 on Github, where we explore a collection of 2,288 holiday-related episodes from 1,389 parent series sourced from the Internet Movie Database (IMDb). All episodes in the dataset are holiday episodes identified by keywords such as “Christmas,” “Holiday,” “Hanukkah,” and “Kwanzaa” in their title. The dataset spans from 1949 to 2023, providing key information for each episode, including IMDb ratings, number of votes, genre labels (often multi-genre), release year, runtime, and average rating of the parent series.
+
+Holiday-themed episodes are a long-standing television tradition, widely anticipated by audiences and frequently produced. However, the sheer volume of such episodes makes us wonder what kinds of episodes are actually most enjoyed. Intuitively, holiday favorites are assumed to be associated with comedic or heartwarming genres, with shows like Friends and The Office frequently topping “best-of” Christmas episode lists (Garrity & Freedman, 2023). However, is this really the case? This project seeks to revisit these assumptions through a data-driven lens, to explore the correlations between certain episode characteristics and audience preferences. Time series analysis is also performed to identify how preferences have changed over time.
+
+Hence, we formulated the central question of **“What kind of holiday episodes do audiences enjoy the most?”** with three sub-questions to guide our data exploration and trend identification.
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+#install.packages("RColorBrewer") 
+#install.packages("viridis")     
+#install.packages("ggthemes")  
+#install.packages("scales")     
+#install.packages("pals")
+#install.packages("kableExtra")
+
+library(tidyverse)
+library(knitr)
+library(RColorBrewer)
+library(ggthemes)
+library(scales)
+library(pals)
+library(viridis)
+library(kableExtra)
+
+```
+
+### Importing Data
+```{r message=FALSE}
+holiday_episodes <- readr::read_csv("https://raw.githubusercontent.com/rfordatascience/tidytuesday/main/data/2023/2023-12-19/holiday_episodes.csv")
+
+holiday_genres <- readr::read_csv("https://raw.githubusercontent.com/rfordatascience/tidytuesday/main/data/2023/2023-12-19/holiday_episode_genres.csv")
+```
+
+## Data Cleaning
+
+We are mainly working with different variables and dataframes, hence data cleaning (like filtering out NA columns) are done in individual data visualisation plots. We have prepared different variables required for different plots under the respective plot code blocks.
+
+### Merging Holiday Episodes and Holiday Genres
+
+```{r}
+holiday_episodes <- holiday_episodes %>%
+  left_join(holiday_genres, by = "tconst") %>%
+  rename(main_genre = genres.y, 
+         genre_combi = genres.x)
+```
+
+We merged the **Holiday Episodes** and **Holiday Episodes Genres** dataframes using ‘left_join’, using ``tconst`` as the primary key. Next, we renamed the column ``genres.y`` to ``main_genre`` for clarity.
+
+## Summary Statistics
+
+```{r summary-tables, echo=FALSE}
+
+# Overall summary of counts
+distinct_df <- holiday_episodes %>%
+  distinct(tconst, .keep_all = TRUE)
+
+overall_summary <- tibble(
+  Metric = c(
+    "Earliest Year", "Latest Year",
+    "Total Episodes (Unique)", "Total Series",
+    "Unique Genre Combinations", "Unique Genres",
+    "Christmas Episodes", "Hanukkah Episodes", "Kwanzaa Episodes", "General Holiday Episodes"
+  ),
+  Count = c(
+    min(distinct_df$year, na.rm = TRUE),
+    max(distinct_df$year, na.rm = TRUE),
+    n_distinct(distinct_df$tconst),
+    n_distinct(distinct_df$parent_primary_title),
+    n_distinct(distinct_df$genre_combi),
+    n_distinct(distinct_df$main_genre),
+    sum(distinct_df$christmas, na.rm = TRUE),
+    sum(distinct_df$hanukkah, na.rm = TRUE),
+    sum(distinct_df$kwanzaa, na.rm = TRUE),
+    sum(distinct_df$holiday, na.rm = TRUE)
+  )
+)
+
+kable(overall_summary, caption = "Table 1: Overall Dataset Summary")
+
+# Top 10 genres by average votes
+top_votes <- distinct_df %>%
+  group_by(main_genre) %>%
+  summarise(avg_votes = mean(num_votes, na.rm = TRUE), .groups = "drop") %>%
+  slice_max(avg_votes, n = 10) %>%
+  mutate(Rank = row_number()) %>%
+  select(Rank, Genre_Votes = main_genre, Avg_Votes = avg_votes)
+
+# Top 10 genres by average rating
+top_ratings <- distinct_df %>%
+  group_by(main_genre) %>%
+  summarise(avg_rating = mean(average_rating, na.rm = TRUE), .groups = "drop") %>%
+  slice_max(avg_rating, n = 10) %>%
+  mutate(Rank = row_number()) %>%
+  select(Rank, Genre_Ratings = main_genre, Avg_Rating = avg_rating)
+
+# Top 10 most produced genres
+top_produced <- distinct_df %>%
+  count(main_genre, name = "num_episodes") %>%
+  slice_max(num_episodes, n = 10) %>%
+  mutate(Rank = row_number()) %>%
+  select(Rank, Genre_Produced = main_genre, Episodes = num_episodes)
+
+comparison_table <- full_join(top_votes, top_ratings, by = "Rank") %>%
+  full_join(top_produced, by = "Rank")%>% 
+  select(-Rank)%>%
+  rename(
+    `Top Voted Genre`     = Genre_Votes,
+    `Avg. Votes`          = Avg_Votes,
+    `Top Rated Genre`     = Genre_Ratings,
+    `Avg. Rating`         = Avg_Rating,
+    `Most Produced Genre` = Genre_Produced,
+    `# of Episodes`       = Episodes
+  )
+kable(comparison_table, caption = "Top 10 Genres by Votes, Ratings, and Production", digits = 2, align="c") %>%
+  kable_styling(full_width = FALSE, position = "center")
+
+# Top 10 highest-rated episodes of all time
+top_episodes_rating <- distinct_df %>%
+  filter(!is.na(average_rating)) %>%
+  arrange(desc(average_rating)) %>%
+  select(primary_title, average_rating, num_votes) %>%
+  slice_head(n = 10)
+
+kable(top_episodes_rating, caption = "Top 10 Highest-Rated Holiday Episodes", digits = 2)
+
+# Top 10 most-voted episodes
+top_episodes_votes <- distinct_df %>%
+  filter(!is.na(num_votes)) %>%
+  arrange(desc(num_votes)) %>%
+  select(primary_title, num_votes, average_rating) %>%
+  slice_head(n = 10)
+
+kable(top_episodes_votes, caption = "Top 10 Most-Voted Holiday Episodes")
+
+```
+
+From our data exploration, we observed that keyword classification of holiday episodes is limited. While 1,793 episodes mention "Christmas", there are only 12 Hanukkah and 5 Kwanzaa episodes, making ‘genre’ a more meaningful classification for episodes. There are 22 distinct genres identified out of 233 possible multi-genre combinations.
+
+Genres like Drama and Fantasy attract the most viewer engagement (via voting), averaging over 800 votes per episode, while Horror and Romance top the rating charts with averages of 8.62 and 8.30, respectively. Notably, Comedy dominates in production volume, contributing nearly 1 in 2 holiday episodes. The most-voted episode, White Christmas, amassed 66,843 votes with a high rating of 9.1, highlighting the rare but powerful impact of standout titles. These statistics helped guide our visual analyses and pointed us toward genre and format-specific patterns in holiday episode popularity and audience preferences, while considering the impact of certain anomalies when making our deductions.
+
+To investigate our central question, we focused on three key dimensions: **genre**, **runtime**, and **temporal changes in audience preferences**, as these factors collectively shape viewer expectations and enjoyment. We further split our main research questions into 3 sub-questions to better observe trends within the dataset. 
+
+Our first plot, a bar chart of genre vote share over time, illustrates how audience preferences have evolved from the 1940s to the 2020s. To maintain focus, we highlighted only selected genres that showed notable trends — such as the rise of Drama and the decline of Family — instead of displaying all 22. Next, a 2D kernel density estimate (KDE) plot of rating versus runtime, faceted by genre, helped identify optimal runtimes for the most popular genres, revealing how episode lengths align with audience expectations. Finally, our lollipop plot compares the ratings of holiday episodes to their parent series, allowing us to observe which genres benefit most from the festive context and are the most worthwhile for filmmakers to produce holiday episodes for — with some seeing significant boosts, and others remaining largely unaffected.
+
+Collectively, these plots will provide a nuanced view of what audiences value most in holiday episodes.
+
+## Data Visualisation
+
+### Plot 1: How has the popularity of TV Genres changed over time?
+
+Our stacked bar chart examines how audience preferences for holiday episode genres have evolved over time.
+
+### Cleaning / Pre-processing
+
+The key variables used include ``main_genre`` (the primary genre of each holiday episode), ``num_votes`` (number of votes the title has received on IMDb, which reflects how popular an episode is), and ``year`` (used to determine the episode’s release decade). Before analysis, episodes with missing values in any of these key variables were removed to ensure accuracy in the results.
+
+To better observe long-term trends, episodes were grouped into decades by rounding down the release year to the nearest multiple of ten. This helped smooth over year-to-year variation, making it easier to spot broader trends in audience preferences over time. Since episodes can belong to multiple genres, we avoided overcounting by calculating ``weighted_votes``, which evenly distributed each episode’s votes across its genres. These weighted votes were then aggregated by genre and decade, and normalised within each decade to reflect each genre’s share of audience votes. We initially visualised all available genres but found that only a subset showed clear trends. Based on this, we retained six genres – Animation, Comedy, Family, Drama, Sci-Fi and Western, while grouping the rest under “Other”. This helps to keep the visualisation focused, while still capturing the most notable shifts in genre popularity.
+
+### Rationale
+
+A stacked bar chart is ideal for answering the question of interest, as it visually conveys how genre preferences have shifted across decades. The stacking allows for easy comparison of each genre’s relative prominence over time, clearly highlighting which genres dominated each decade and revealing patterns such as the rise or decline of specific genres. By presenting the proportion of audience votes rather than the absolute number of votes, the chart accounts for changes in the number of episodes or users across decades, ensuring a more accurate comparison of genre popularity over time.
+
+```{r fig.asp=0.7, fig.align='center',message=FALSE}
+
+# Average votes per genres each decade
+df <- holiday_episodes %>%
+  filter(!is.na(main_genre), !is.na(num_votes), !is.na(year)) %>%
+  mutate(
+    year = as.numeric(year),
+    decade = paste0(floor(year/10)*10, "–", floor(year/10)*10+9)
+  ) %>%
+  group_by(tconst) %>% # To avoid over counting
+  mutate(n_genres = n()) %>%
+  ungroup() %>%
+  mutate(weighted_votes = num_votes / n_genres) # Votes for one episode is splitted into the genres it has
+
+# Aggregate total weighted votes per genre per decade
+votes_by_decade <- df %>%
+  group_by(decade, main_genre) %>%
+  summarise(total_votes = sum(weighted_votes), .groups = "drop")
+
+# Normalize to proportion within each decade
+vote_share <- votes_by_decade %>%
+  group_by(decade) %>%
+  mutate(decade_total = sum(total_votes)) %>%
+  ungroup() %>%
+  mutate(proportion = total_votes / decade_total)
+
+# Color palette
+custom_colors <- c(
+  "Animation" = "#F4A261",  # warm peach-orange
+  "Comedy"    = "#457B9D",  # soft blue
+  "Family"    = "#2A9D8F",  # teal-green
+  "Drama"     = "#E76F51",  # muted coral-red
+  "Sci-Fi"    = "#6D597A",  # soft plum
+  "Western"   = "#B08968",  # saddle brown
+  "Other"     = "#D3D3D3"   # light gray
+)
+
+# Keep 6 selected genres, rest → "Other" (Selected based on previous data exploration)
+highlight_genres <- c("Animation", "Comedy", "Family", "Drama", "Sci-Fi", "Western")
+
+vote_share_highlighted <- vote_share %>%
+  mutate(main_genre = ifelse(main_genre %in% highlight_genres, main_genre, "Other")) 
+
+vote_share_highlighted$main_genre <- factor(
+  vote_share_highlighted$main_genre,
+  levels = c("Other","Animation", "Sci-Fi", "Western","Comedy","Drama","Family")
+)
+
+# Plot
+ggplot(vote_share_highlighted, aes(x = decade, y = proportion, fill = main_genre)) +
+  geom_bar(stat = "identity", color = "white", linewidth = 0.3) +
+  scale_y_continuous(labels = percent_format()) +
+  scale_fill_manual(values = custom_colors) +
+  labs(
+    title = "Shifts in Holiday Episodes Genre Preferences by Decade",
+    subtitle = "Interesting trends observed across selected genres",
+    x = "Decade",
+    y = "Proportion of total votes (%)",
+    fill = "Genre"
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.position = "right",
+    plot.title = element_text(face = "bold")
+  )
+
+```
+
+### Plot 2: What is the optimal runtime for each Genre, to achieve higher ratings?
+
+Our 2D kernel density estimate (KDE) plot explores how runtime and reception (average rating) interact across the top five most highly engaged (most highly voted) holiday episode genres. 
+
+### Cleaning / Pre-processing
+
+To identify these top 5 highly engaged genres, episodes with missing genre or vote data were first removed. The dataset was then grouped by ``main_genre``, and the mean number of votes per episode (``avg_votes``) was computed. The five genres with the highest average votes, used here to represent audience engagement, were selected for further analysis.
+
+The key variables used include ``runtime_minutes`` (x-axis), ``average_rating`` (y-axis), and ``main_genre`` (facet). The ``runtime_minutes`` variable reports the duration of each holiday episode in minutes. A 2D KDE plot was applied to each genre group to reveal clusters where episodes tend to concentrate based on their runtime and rating. The normalized density values (z) highlight these areas, and the brightest region in each panel marks the "sweet spot", which pin-points the runtime-rating combination most typical and best-received within that genre. To maintain visual clarity and focus on meaningful trends, runtimes were capped at 250 minutes and ratings at 10.
+
+### Rationale
+
+This visualization is well-suited to answering the overarching question of what kind of holiday episodes audiences enjoy most. Rather than plotting individual data points in a scatterplot, which may be noisy or sparse, a KDE plot reveals overall viewer trends by smoothing the distribution and emphasizing areas of high concentration. This enables filmmakers to quickly, at a glance, pinpoint the optimal format for a potentially well-received genre through the “sweet-spot” where high ratings coincide with commonly occurring runtimes. The optimal spot is determined by the area of maximum density, which offers filmmakers a reliable suggestion of a good run-time that likely yields safe success based on past consistent results. Besides, by faceting the plot by genre, we can compare viewer preferences in a structured format and observe how optimal runtimes vary significantly across genres, aligning with viewers’ genre-specific expectations. Ultimately, the plot goes beyond showing what is popular based on voting by also highlighting what runtime and rating combinations are most consistently well-received, genre by genre. 
+
+```{r sweetspot‐from‐csv, message=FALSE, warning=FALSE, fig.height=7, fig.width=10}
+# Select top 5 genres by average votes
+top5 <- holiday_episodes %>%
+  group_by(main_genre) %>%
+  summarise(avg_votes = mean(num_votes, na.rm = TRUE)) %>%
+  slice_max(avg_votes, n = 5) %>%
+  pull(main_genre)
+
+dfp <- holiday_episodes %>%
+  filter(main_genre %in% top5)
+
+# Density + sweet spot per genre
+get_density_and_sweet_spot <- function(df, genre) {
+  df_genre <- df %>%
+    filter(main_genre == genre,
+           is.finite(runtime_minutes), is.finite(average_rating))
+  
+  if (nrow(df_genre) < 10) return(NULL)
+  
+  kde <- MASS::kde2d(df_genre$runtime_minutes, df_genre$average_rating,
+                     n = 200, lims = c(0, 250, 0, 10))
+  
+  z_norm <- kde$z / max(kde$z)
+  
+  dens_df <- expand.grid(x = kde$x, y = kde$y) %>%
+    mutate(z = as.vector(z_norm), genre = genre) %>%
+    filter(z > 0.02)
+  
+  peak_idx <- which(z_norm == max(z_norm), arr.ind = TRUE)
+  sweet_spot <- data.frame(
+    genre = genre,
+    runtime_center = kde$x[peak_idx[1]],
+    rating_center = kde$y[peak_idx[2]],
+    label_x = kde$x[peak_idx[1]] + 50,
+    label_y = kde$y[peak_idx[2]] - 6
+  )
+  
+  return(list(density = dens_df, sweet_spot = sweet_spot))
+}
+
+# Apply function to top genres
+all_results <- lapply(top5, function(g) get_density_and_sweet_spot(dfp, g))
+density_data <- bind_rows(lapply(all_results, function(x) x$density))
+sweet_spots <- bind_rows(lapply(all_results, function(x) x$sweet_spot))
+
+# Plot
+ggplot(density_data, aes(x = x, y = y, fill = z)) +
+  geom_tile() +
+  
+  # Sweet spot dot
+  geom_point(data = sweet_spots,
+             aes(x = runtime_center, y = rating_center),
+             color = "#006400", size = 1, inherit.aes = FALSE) +
+  
+  # Arrow from sweet spot to label
+  geom_curve(data = sweet_spots,
+             aes(x = label_x, y = label_y,
+                 xend = runtime_center, yend = rating_center),
+             arrow = arrow(length = unit(0.05, "cm")),
+             curvature = 0,
+             color = "#006400", size = 0.3,
+             inherit.aes = FALSE) +
+  geom_text(data = sweet_spots,
+            aes(x = label_x, y = label_y,
+                label = paste0(as.integer(runtime_center), " min\n", round(rating_center, 1),"stars")),
+            nudge_x = 5, color = "#006400", size = 3, fontface = "bold",
+            hjust = 0, vjust = 0, inherit.aes = FALSE) +
+  facet_wrap(~genre, scales = "fixed") +
+  scale_fill_viridis(name = "Legend:\nRelative Density (0-1)", option = "plasma") +
+  scale_x_continuous(breaks = seq(0, 250, 50), limits = c(0, 250), expand = c(0, 0)) +
+  scale_y_continuous(breaks = seq(0, 10, 1), limits = c(0, 10), expand = c(0, 0)) +
+  
+  labs(
+    title = "2D Kernel Density Estimate Plot: Ratings by Runtime (Top 5 Genres) with Optimal Points",
+    subtitle = "Top 5 genres are based on highest average votes (genres with highest engagement)",
+    x = "Runtime (minutes)",
+    y = "IMDB Average Rating",
+    caption = "Note: Density is on a normalised scale (0 to 1), where brighter areas = denser clusters (i.e. more episodes fall within that runtime-rating combination).\nThe labelled optimal spot is of maximum density (which reflects where episodes are both frequently produced and receive consistently high ratings)."
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(
+    strip.text = element_text(face = "bold", size = 12),
+    legend.position = "right",
+    plot.title = element_text(size = 11, face = "bold", hjust = 0.5),
+    plot.subtitle = element_text(size = 9, hjust = 0.5),
+    plot.caption = element_text(hjust = 0.5, size = 9.5, margin = margin(t = 8)),
+    axis.title = element_text(face = "bold", size = 9),
+    axis.text = element_text(color = "black", size = 7),
+    panel.grid.minor = element_blank(),
+    panel.spacing = unit(0.8, "lines"),
+    legend.background = element_rect(color = "black", fill = NA, size = 0.3),
+    legend.title = element_text(face = "bold", size = 9),
+    legend.text = element_text(size = 8)
+  )
+# NOTE: Plot omits extremely low-density values outside the specified axis limits (eg. run-time > 250 min or rating > 10) that do not affect the final plot visually or statistically. These points were removed to focus on the most meaningful clusters.
+
+```
+
+### Plot 3: Do Holiday episodes perform better than regular episodes from the parent series?
+
+Our lollipop plot examines whether holiday episodes outperform their respective parent series, and if so which genres tend to perform better.
+
+### Cleaning / Preprocessing 
+
+We first cleaned the dataset by removing rows with missing values in either average_rating or ``parent_average_rating``. We derived ``rating_diff``, the difference between each holiday episode’s rating and its parent series’ average rating. This measures the relative performance of the holiday episode. We then grouped the data by ``main_genre`` and computed the ``mean_diff``, the mean rating difference for each genre.  
+
+A lollipop plot was generated to see whether each genre tends to receive a positive or negative boost during the holidays. Genres performing better (positive differences) were coloured blue while genres that performed worse (negative differences) were coloured red. Text labels indicate the exact mean difference, and axis limits were set between -0.9 and +0.9 for better visual interpretation.
+
+### Rationale
+
+This visualization quantifies the holiday "effect" across genres. Rather than simply comparing average ratings, we contextualize each holiday episode’s reception relative to its baseline series quality. This allows us to isolate whether the holiday theme adds value for viewers, and whether audiences enjoy certain genres more specifically during the holidays.
+
+```{r fig.asp=0.7, fig.align='center',message=FALSE}
+
+# Summarise mean rating difference
+genre_lollipop <- holiday_episodes %>%
+  mutate(rating_diff = average_rating - parent_average_rating) %>%
+  group_by(main_genre) %>%
+  summarise(mean_diff = mean(rating_diff, na.rm = TRUE)) %>%
+  filter(!is.na(main_genre)) %>%
+  mutate(
+    color = ifelse(mean_diff < 0, "tomato", "skyblue"),
+    label = sprintf("%+.2f", mean_diff)
+  ) %>%
+  arrange(mean_diff)
+
+# Plot
+ggplot(genre_lollipop, aes(x = reorder(main_genre, mean_diff), y = mean_diff)) +
+  geom_segment(aes(xend = main_genre, y = 0, yend = mean_diff), color = "black") +
+  geom_point(size = 3, aes(color = color)) +
+  geom_text(
+    aes(label=label),
+    hjust = ifelse(genre_lollipop$mean_diff < 0, 1.2, -0.2),
+    size= 3.2,
+    color = "black"
+  ) +
+  coord_flip() +
+  labs(title = "Rating difference across Genres",
+       x = "Genres", y = "Episode Avg Rating - Parent Series Avg Rating") +
+  theme_minimal() +
+  scale_color_identity() +
+  expand_limits(y = c(-0.9, 0.9)) 
+```
+
+## Discussion
+
+From the stacked bar chart, we observe a significant shift in audience preferences for holiday episode genres over time. In the earlier years, Comedy and Family genres were the most popular, reflecting an era when television was a shared family activity. These genres typically offered broad and light-hearted themes that appealed to a wide audience, making them ideal for group viewing. However, their popularity has gradually declined over the years. This could be due to the rise of digital media platforms, which have given people more options for entertainment (Braxton, G., 2011). Audiences today are more inclined to engage with content that aligns with their personal tastes, rather than watching shows as a group activity. As a result, the proportion of viewers exposed to genres that are typically watched as group activities declines while genres like Sci-Fi, known for their distinct and imaginative narratives and more suitable for viewers with acquired preferences, have gained traction. Additionally, the growing proportion of episodes classified under "Other" genres suggests an increasing diversification of content, as filmmakers and producers seek to cater to a wider array of interests beyond traditional genre boundaries. This shift reflects how today’s viewing habits have become more individualised, leading to a broader mix of genres and a more varied media landscape.
+
+<br>
+
+From the 2D Kernel Density Estimate (KDE) plot, it can be observed that viewer preferences for holiday episode runtimes differ greatly across genres. This falls within our expectations, as it is likely that different runtimes would suit the different narrative requirements for each genre, and that there is no one-size-fits-all runtime that works best and guarantees success for all films. For example, horror episodes exhibit a notably longer optimal runtime of 143 minutes, likely because they often rely on slow-paced, gradual tension-building to eventually reach a climax so as to deliver satisfying scares and psychological immersion for viewers. In contrast, drama episodes have a much shorter optimal runtime of 25 minutes, possibly because holiday dramas often revolve around singular moments of reflection, family conflict, or sentimental resolution that viewers can derive impact from quickly. It is also interesting to note that under the horror genre, there is a second region of high density, with a runtime 40 minutes and attaining a substantial average rating. This could be due to a gradual shift in audience preferences towards short videos over long movies, thanks to the rapid increase of short form videos and self-media. (Jia, Lu., 2023) This tells us that there is no universal optimal runtime that guarantees higher IMDB ratings on an episode, and that ideal episode lengths are instead genre-specific. Hence from our plot, filmmakers and producers can tailor their holiday episode runtimes based on current genre norms to maximise audience satisfaction. Branching off from our study, it may also be noteworthy to further explore ideal runtime lengths of episodes with multiple genres, and the possible effects of certain genre combinations on optimal runtimes. 
+
+<br>
+
+Lastly, the lollipop chart compares holiday episodes with regular episodes, across various genres. Genres like Musical, Family, Sci-Fi, Romance and Western show positive rating differences, meaning that holiday episodes have higher ratings than their parent series. For example, Musical (+0.71) and Family (+0.59) genres stand out with the highest positive differences. This suggests that these genres may bring a certain charm to the holiday episodes, making them feel more festive and enjoyable than regular episodes. On the other hand, genres like Sport (-0.80), Biography (-0.61) and Horror (-0.41) may not be ideal genres for holiday specials. This could be due to the fact that sporting events are usually live and don’t conform to the typical structure of a scripted holiday episode. Narratives from the Biography genre typically require a level of gravity and seriousness that may not easily align with the light-hearted or festive tone associated with holiday episodes. Historically, horror films are often associated with Halloween, rather than holiday seasons like Christmas. 
+
+<br>
+
+In summary, our project addresses the central question, **“What kinds of holiday episodes do audiences enjoy the most?”** through three key angles:
+
+**1. How has the popularity of TV genres changed over time?**
+
+**2. What is the optimal runtime for each genre to achieve higher ratings?**
+
+**3. Do holiday episodes perform better than regular episodes from the parent series?**
+
+Our findings suggest that audiences respond most positively to holiday episodes that align with established genre conventions while incorporating a festive twist. Preferences are shaped not only by content type but also by format. Optimal runtimes vary by genre, and certain genres consistently outperform others in the holiday context.
+
+By understanding these patterns, filmmakers and producers can design holiday episodes that better meet audience expectations, ultimately creating more engaging and resonant content.
+
+## Teamwork
+
+```{r echo=FALSE}
+
+Name <- c("Bryce Tan Jing Kai","Tan Hon Jung","Lim Shi Ying","Yang Xiuli", "Qian Yunhan")
+Reponsibilities <- c("Ideation, Report Writing, Plot 3 Coding",
+                     "Ideation, Report Writing, Plot 2 Coding",
+                     "Ideation, Report Writing, Plot 2 Coding",
+                     "Ideation, Report Writing, Plot 1 Coding",
+                     "Ideation, Report Writing, Plot 3 Coding")
+df <- data.frame(Name,Reponsibilities)
+kable(df)
+
+```
+
+## References
+
+### Data Source:
+
+https://github.com/rfordatascience/tidytuesday/blob/main/data/2023/2023-12-19/readme.md
+
+### Others:
+
+Braxton, G. (2011, October 23). Is family-friendly TV going extinct? - Los Angeles Times. Los Angeles Times. https://www.latimes.com/entertainment/tv/la-xpm-2011-oct-23-la-ca-family-20111023-story.html 
+
+Garrity, A., & Freedman, A. (2023, October 30). 35 best TV Christmas and holiday episodes of all time. Good Housekeeping. https://www.goodhousekeeping.com/holidays/christmas-ideas/g29613757/best-christmas-themed-tv-shows-episodes/
+
+Jia, Lu. (2023). Analysis of Short Film from the Perspective of Filmmakers and Audiences. Communications in Humanities Research. 3. 1163-1167. 10.54254/2753-7064/3/2022978. 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
